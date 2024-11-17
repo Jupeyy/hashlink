@@ -820,3 +820,137 @@ fn test_cursor_back_mut() {
     assert!(cursor.current().is_some());
     assert_eq!(cursor.current().unwrap().1, &mut 3);
 }
+
+#[test]
+fn test_view_and_entry_mut() {
+    let mut map = LinkedHashMap::new();
+    map.insert("a", 10);
+    map.insert("c", 30);
+    map.insert("b", 20);
+
+    use hashlink::linked_hash_map::view::*;
+    let (v, mut l) = LinkedHashMapEntryAndRes::get(&mut map, &"a");
+
+    *v = 17;
+
+    for (k, v) in l.iter_mut() {
+        if *k == "b" {
+            *v = 23;
+        }
+    }
+
+    assert_eq!(17, map[&"a"]);
+    assert_eq!(23, map[&"b"]);
+}
+
+#[test]
+fn test_view_and_entry_get_mut() {
+    let mut map = LinkedHashMap::new();
+    map.insert("a", 10);
+    map.insert("c", 30);
+    map.insert("b", 20);
+
+    use hashlink::linked_hash_map::view::*;
+    let (v, mut l) = LinkedHashMapEntryAndRes::get(&mut map, &"a");
+
+    *v = 17;
+
+    let b = l.get("b");
+    assert_eq!(Some(&20), b);
+
+    for (k, v_inner) in l.iter_mut() {
+        if *k == "b" {
+            *v_inner = 23;
+        }
+        assert!(*k != "a");
+        assert!(
+            core::hint::black_box({
+                *v = 17;
+                *v
+            }) == 17
+        );
+    }
+
+    assert_eq!(17, map[&"a"]);
+    assert_eq!(23, map[&"b"]);
+}
+
+#[test]
+fn test_view_iter_mut() {
+    let mut map = LinkedHashMap::new();
+    map.insert("a", 10);
+    map.insert("c", 30);
+    map.insert("b", 20);
+
+    use hashlink::linked_hash_map::view::*;
+    let mut l = LinkedHashMapIterExt::new(&mut map);
+
+    l.for_each(|(k, (v, mut l))| {
+        if *k == "a" {
+            *v = 17;
+
+            for (k, v) in l.iter_mut() {
+                if *k == "b" {
+                    *v = 23;
+                }
+            }
+        } else if *k == "b" {
+            assert_eq!(23, *v);
+        }
+    });
+    assert_eq!(17, map[&"a"]);
+    assert_eq!(23, map[&"b"]);
+}
+
+#[test]
+fn test_view_iter_rev_mut() {
+    let mut map = LinkedHashMap::new();
+    map.insert("a", 10);
+    map.insert("c", 30);
+    map.insert("b", 20);
+
+    use hashlink::linked_hash_map::view::*;
+    let l = LinkedHashMapIterExt::new(&mut map);
+
+    l.rev().for_each(|(k, (v, mut l))| {
+        if *k == "b" {
+            *v = 23;
+
+            for (k, v) in l.iter_mut().rev() {
+                if *k == "a" {
+                    *v = 17;
+                }
+            }
+        } else if *k == "a" {
+            assert_eq!(17, *v);
+        }
+    });
+    assert_eq!(17, map[&"a"]);
+    assert_eq!(23, map[&"b"]);
+}
+
+#[test]
+fn test_view_iter_get_mut() {
+    let mut map = LinkedHashMap::new();
+    map.insert("a", 10);
+    map.insert("c", 30);
+    map.insert("b", 20);
+
+    use hashlink::linked_hash_map::view::*;
+    let mut l = LinkedHashMapIterExt::new(&mut map);
+
+    l.for_each(|(k, (v, mut l))| {
+        if *k == "a" {
+            *v = 17;
+
+            let b = l.get("b");
+            assert_eq!(Some(&20), b);
+
+            *l.get_mut("b").unwrap() = 23;
+        } else if *k == "b" {
+            assert_eq!(23, *v);
+        }
+    });
+    assert_eq!(17, map[&"a"]);
+    assert_eq!(23, map[&"b"]);
+}

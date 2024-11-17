@@ -1,3 +1,6 @@
+pub(crate) mod iter_nodes;
+pub mod view;
+
 use core::{
     alloc::Layout,
     borrow::Borrow,
@@ -14,6 +17,7 @@ use core::{
 use alloc::boxed::Box;
 use hashbrown::hash_map::DefaultHashBuilder;
 use hashbrown::hash_table::{self, HashTable};
+use iter_nodes::IterNodes;
 
 pub enum TryReserveError {
     CapacityOverflow,
@@ -501,6 +505,23 @@ where
                     cur = next;
                 }
             }
+        }
+    }
+
+    pub(crate) fn iter_nodes(&self) -> IterNodes<K, V> {
+        let (head, tail) = if let Some(values) = self.values {
+            unsafe {
+                let ValueLinks { next, prev } = values.as_ref().links.value;
+                (Some(next), Some(prev))
+            }
+        } else {
+            (None, None)
+        };
+
+        IterNodes {
+            head,
+            tail,
+            remaining: self.len(),
         }
     }
 
@@ -2130,7 +2151,7 @@ union Links<K, V> {
     free: FreeLink<K, V>,
 }
 
-struct Node<K, V> {
+pub(crate) struct Node<K, V> {
     entry: MaybeUninit<(K, V)>,
     links: Links<K, V>,
 }
@@ -2162,7 +2183,7 @@ impl<K, V> Node<K, V> {
     }
 }
 
-trait OptNonNullExt<T> {
+pub(crate) trait OptNonNullExt<T> {
     fn as_ptr(self) -> *mut T;
 }
 
