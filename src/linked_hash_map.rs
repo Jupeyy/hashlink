@@ -538,6 +538,90 @@ where
         c.move_prev();
         c
     }
+
+    /// Returns iterator that was skipped to a specific key entry, or None.
+    /// It does not implement `ExactSizeIterator` because
+    /// it is unclear where exactly the iterator is.
+    ///
+    /// It is useful when iterating over a subset of
+    /// all items in order, e.g. for starting a queue iteration at a specific key
+    ///
+    /// # Examples
+    ///
+    /// ```rs
+    /// let mut map = LinkedHashMap::new();
+    ///
+    /// map.insert("a", 10);
+    /// map.insert("b", 20);
+    /// map.insert("c", 30);
+    ///
+    /// assert_eq!(map.iter_at_key(&"e").is_none(), true);
+    ///
+    /// let mut iter = map.iter_at_key(&"b").unwrap();
+    /// assert_eq!((&"b", &20), iter.next().unwrap());
+    /// assert_eq!((&"c", &30), iter.next().unwrap());
+    /// assert_eq!(None, iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    ///
+    #[inline]
+    pub fn iter_at_key(&self, k: &K) -> Option<IterAtKey<'_, K, V>> {
+        let tail = unsafe { self.values?.as_ref().links.value.prev };
+
+        let hash = hash_key(&self.hash_builder, k);
+        unsafe {
+            self.table
+                .find(hash, move |key| k.eq((*key).as_ref().key_ref()))
+                .map(|node| IterAtKey {
+                    tail: tail.as_ptr(),
+                    cur: node.as_ptr(),
+                    marker: PhantomData,
+                })
+        }
+    }
+
+    /// Returns a mutable iterator that was skipped to a specific key entry, or None.
+    /// It does not implement `ExactSizeIterator` because
+    /// it is unclear where exactly the iterator is.
+    ///
+    /// It is useful when iterating over a subset of
+    /// all items in order, e.g. for starting a queue iteration at a specific key
+    ///
+    /// # Examples
+    ///
+    /// ```rs
+    /// let mut map = LinkedHashMap::new();
+    /// map.insert("a", 10);
+    /// map.insert("c", 30);
+    /// map.insert("b", 20);
+    /// map.insert("d", 40);
+    ///
+    /// assert_eq!(map.iter_at_key_mut(&"e").is_none(), true);
+    ///
+    /// let mut iter = map.iter_at_key_mut(&"c").unwrap();
+    /// let entry = iter.next().unwrap();
+    /// assert_eq!("c", *entry.0);
+    /// *entry.1 = 17;
+    ///
+    /// assert_eq!(format!("{:?}", iter), "[(\"b\", 20), (\"d\", 40)]");
+    /// assert_eq!(17, map[&"c"]);
+    /// ```
+    ///
+    #[inline]
+    pub fn iter_at_key_mut(&mut self, k: &K) -> Option<IterAtKeyMut<'_, K, V>> {
+        let tail = unsafe { self.values?.as_ref().links.value.prev };
+        match self.raw_entry_mut().from_key(k) {
+            RawEntryMut::Occupied(entry) => {
+                let cur = entry.entry.get();
+                Some(IterAtKeyMut {
+                    tail: Some(tail),
+                    cur: Some(*cur),
+                    marker: PhantomData,
+                })
+            }
+            RawEntryMut::Vacant(_) => None,
+        }
+    }
 }
 
 impl<K, V, S> LinkedHashMap<K, V, S>
@@ -1377,6 +1461,18 @@ pub struct Drain<'a, K, V> {
     marker: PhantomData<(K, V, &'a LinkedHashMap<K, V>)>,
 }
 
+pub struct IterAtKey<'a, K, V> {
+    tail: *const Node<K, V>,
+    cur: *const Node<K, V>,
+    marker: PhantomData<(&'a K, &'a V)>,
+}
+
+pub struct IterAtKeyMut<'a, K, V> {
+    tail: Option<NonNull<Node<K, V>>>,
+    cur: Option<NonNull<Node<K, V>>>,
+    marker: PhantomData<(&'a K, &'a mut V)>,
+}
+
 impl<K, V> IterMut<'_, K, V> {
     #[inline]
     pub(crate) fn iter(&self) -> Iter<'_, K, V> {
@@ -1413,6 +1509,31 @@ impl<K, V> Drain<'_, K, V> {
     }
 }
 
+impl<K, V> IterAtKeyMut<'_, K, V> {
+    #[inline]
+    pub(crate) fn iter(&self) -> IterAtKey<'_, K, V> {
+        IterAtKey {
+            tail: self.tail.as_ptr(),
+            cur: self.cur.as_ptr(),
+            marker: PhantomData,
+        }
+    }
+}
+
+unsafe impl<K, V> Send for IterAtKey<'_, K, V>
+where
+    K: Send,
+    V: Send,
+{
+}
+
+unsafe impl<K, V> Send for IterAtKeyMut<'_, K, V>
+where
+    K: Send,
+    V: Send,
+{
+}
+
 unsafe impl<K, V> Send for Iter<'_, K, V>
 where
     K: Sync,
@@ -1438,6 +1559,20 @@ unsafe impl<K, V> Send for Drain<'_, K, V>
 where
     K: Send,
     V: Send,
+{
+}
+
+unsafe impl<K, V> Sync for IterAtKey<'_, K, V>
+where
+    K: Sync,
+    V: Sync,
+{
+}
+
+unsafe impl<K, V> Sync for IterAtKeyMut<'_, K, V>
+where
+    K: Sync,
+    V: Sync,
 {
 }
 
@@ -1476,6 +1611,17 @@ impl<K, V> Clone for Iter<'_, K, V> {
     }
 }
 
+impl<K, V> Clone for IterAtKey<'_, K, V> {
+    #[inline]
+    fn clone(&self) -> Self {
+        IterAtKey {
+            tail: self.tail,
+            cur: self.cur,
+            marker: PhantomData,
+        }
+    }
+}
+
 impl<K: fmt::Debug, V: fmt::Debug> fmt::Debug for Iter<'_, K, V> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1506,6 +1652,28 @@ where
 }
 
 impl<K, V> fmt::Debug for Drain<'_, K, V>
+where
+    K: fmt::Debug,
+    V: fmt::Debug,
+{
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<K, V> fmt::Debug for IterAtKey<'_, K, V>
+where
+    K: fmt::Debug,
+    V: fmt::Debug,
+{
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<K, V> fmt::Debug for IterAtKeyMut<'_, K, V>
 where
     K: fmt::Debug,
     V: fmt::Debug,
@@ -1610,6 +1778,47 @@ impl<K, V> Iterator for Drain<'_, K, V> {
     }
 }
 
+impl<'a, K, V> Iterator for IterAtKey<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    #[inline]
+    fn next(&mut self) -> Option<(&'a K, &'a V)> {
+        if self.cur.is_null() {
+            return None;
+        }
+        unsafe {
+            let last_iter = self.cur == self.tail;
+            let (key, value) = (*self.cur).entry_ref();
+            self.cur = (*self.cur).links.value.next.as_ptr();
+            if last_iter {
+                self.cur = ptr::null();
+            }
+            Some((key, value))
+        }
+    }
+}
+
+impl<'a, K, V> Iterator for IterAtKeyMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    #[inline]
+    fn next(&mut self) -> Option<(&'a K, &'a mut V)> {
+        if self.cur.is_none() {
+            None
+        } else {
+            unsafe {
+                let last_iter = self.cur == self.tail;
+                let (key, value) = (*self.cur.as_ptr()).entry_mut();
+                self.cur = Some((*self.cur.as_ptr()).links.value.next);
+                if last_iter {
+                    self.cur = None;
+                }
+                Some((key, value))
+            }
+        }
+    }
+}
+
 impl<'a, K, V> DoubleEndedIterator for Iter<'a, K, V> {
     #[inline]
     fn next_back(&mut self) -> Option<(&'a K, &'a V)> {
@@ -1672,6 +1881,42 @@ impl<K, V> DoubleEndedIterator for Drain<'_, K, V> {
             let entry = tail.as_mut().take_entry();
             push_free(&mut *self.free.as_ptr(), tail);
             Some(entry)
+        }
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator for IterAtKey<'a, K, V> {
+    #[inline]
+    fn next_back(&mut self) -> Option<(&'a K, &'a V)> {
+        if self.cur.is_null() {
+            None
+        } else {
+            unsafe {
+                if self.cur == self.tail {
+                    self.cur = ptr::null();
+                }
+                let (key, value) = (*self.tail).entry_ref();
+                self.tail = (*self.tail).links.value.prev.as_ptr();
+                Some((key, value))
+            }
+        }
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator for IterAtKeyMut<'a, K, V> {
+    #[inline]
+    fn next_back(&mut self) -> Option<(&'a K, &'a mut V)> {
+        if self.cur.is_none() {
+            None
+        } else {
+            unsafe {
+                if self.cur == self.tail {
+                    self.cur = None;
+                }
+                let (key, value) = (*self.tail.as_ptr()).entry_mut();
+                self.tail = Some((*self.tail.as_ptr()).links.value.prev);
+                Some((key, value))
+            }
         }
     }
 }
