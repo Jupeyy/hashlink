@@ -788,6 +788,32 @@ impl<'a, K, V, S> Entry<'a, K, V, S> {
             Entry::Vacant(entry) => Entry::Vacant(entry),
         }
     }
+
+    /// Similar to `Entry::or_insert`, but keeps the order of the occupied element.
+    #[inline]
+    pub fn or_insert_keep_order(self, default: V) -> &'a mut V
+    where
+        K: Hash,
+        S: BuildHasher,
+    {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default),
+        }
+    }
+
+    /// Similar to `Entry::or_insert_with`, but keeps the order of the occupied element.
+    #[inline]
+    pub fn or_insert_with_keep_order<F: FnOnce() -> V>(self, default: F) -> &'a mut V
+    where
+        K: Hash,
+        S: BuildHasher,
+    {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default()),
+        }
+    }
 }
 
 pub struct OccupiedEntry<'a, K, V, S> {
